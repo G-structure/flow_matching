@@ -5,3 +5,4 @@
 # LICENSE file in the root directory of this source tree.
 
 __version__ = "1.0.10"
+from .train_utils import FlowMatchingWrapper, FlowMatchingTrainer
