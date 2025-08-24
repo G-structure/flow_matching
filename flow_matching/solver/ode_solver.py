@@ -84,6 +84,33 @@ class ODESolver(Solver):
         def ode_func(t, x):
             return self.velocity_model(x=x, t=t, **model_extras)
 
+        if method == "heun3":
+            if step_size is None:
+                raise ValueError("heun3 requires a step_size")
+
+            t0 = float(time_grid[0])
+            t1 = float(time_grid[-1])
+            direction = 1.0 if t1 >= t0 else -1.0
+            h = step_size * direction
+
+            with torch.set_grad_enabled(enable_grad):
+                t = t0
+                x = x_init
+                sols = [x]
+                while (t1 - t) * direction > 1e-12:
+                    t_tensor = torch.tensor(t, device=x.device)
+                    k1 = ode_func(t_tensor, x)
+                    k2 = ode_func(t_tensor + h / 3.0, x + h / 3.0 * k1)
+                    k3 = ode_func(t_tensor + 2.0 * h / 3.0, x + 2.0 * h / 3.0 * k2)
+                    x = x + h * (k1 + 3.0 * k3) / 4.0
+                    t += h
+                    if return_intermediates:
+                        sols.append(x)
+
+            if return_intermediates:
+                return torch.stack(sols)
+            return x
+
         ode_opts = {"step_size": step_size} if step_size is not None else {}
 
         with torch.set_grad_enabled(enable_grad):
@@ -175,6 +202,45 @@ class ODESolver(Solver):
             return ut.detach(), div.detach()
 
         y_init = (x_1, torch.zeros(x_1.shape[0], device=x_1.device))
+
+        if method == "heun3":
+            if step_size is None:
+                raise ValueError("heun3 requires a step_size")
+
+            t0 = float(time_grid[0])
+            t1 = float(time_grid[-1])
+            direction = 1.0 if t1 >= t0 else -1.0
+            h = step_size * direction
+
+            with torch.set_grad_enabled(enable_grad):
+                t = t0
+                x, logdet = y_init
+                xs = [x]
+                logdets = [logdet]
+                while (t1 - t) * direction > 1e-12:
+                    t_tensor = torch.tensor(t, device=x.device)
+                    k1x, k1d = dynamics_func(t_tensor, (x, logdet))
+                    k2x, k2d = dynamics_func(
+                        t_tensor + h / 3.0, (x + h / 3.0 * k1x, logdet + h / 3.0 * k1d)
+                    )
+                    k3x, k3d = dynamics_func(
+                        t_tensor + 2.0 * h / 3.0,
+                        (x + 2.0 * h / 3.0 * k2x, logdet + 2.0 * h / 3.0 * k2d),
+                    )
+                    x = x + h * (k1x + 3.0 * k3x) / 4.0
+                    logdet = logdet + h * (k1d + 3.0 * k3d) / 4.0
+                    t += h
+                    if return_intermediates:
+                        xs.append(x)
+                        logdets.append(logdet)
+
+            x_source = x
+            source_log_p = log_p0(x_source)
+            if return_intermediates:
+                return (torch.stack(xs), torch.stack(logdets)), source_log_p + logdet
+            else:
+                return (x, logdet), source_log_p + logdet
+
         ode_opts = {"step_size": step_size} if step_size is not None else {}
 
         with torch.set_grad_enabled(enable_grad):
